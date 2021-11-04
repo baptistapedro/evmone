@@ -121,7 +121,7 @@ class InstructionTracer : public Tracer
         m_out << R"("pc":)" << pc;
         m_out << R"(,"op":)" << int{opcode};
         m_out << R"(,"opName":")" << get_name(m_opcode_names, opcode) << '"';
-        m_out << R"(,"gas":)" << state.gas_left;
+        m_out << R"(,"gas":0x)" << std::hex << state.gas_left << std::dec;
         output_stack(stack_top, stack_height);
 
         // Full memory can be dumped as evmc::hex({state.memory.data(), state.memory.size()}),
