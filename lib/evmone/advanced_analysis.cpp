@@ -46,7 +46,7 @@ AdvancedCodeAnalysis analyze(evmc_revision rev, bytes_view code) noexcept
 
     AdvancedCodeAnalysis analysis;
 
-    const auto max_instrs_size = code.size() + 1;
+    const auto max_instrs_size = code.size() + 2;
     analysis.instrs.reserve(max_instrs_size);
 
     // This is 2x more than needed but using (code.size() / 2 + 1) increases page-faults 1000x.
@@ -188,7 +188,7 @@ AdvancedCodeAnalysis analyze(evmc_revision rev, bytes_view code) noexcept
     // TODO: This is not needed if the last instruction is a terminating one.
     analysis.instrs.emplace_back(op_tbl[OP_STOP].fn);
 
-    // FIXME: assert(analysis.instrs.size() <= max_instrs_size);
+    assert(analysis.instrs.size() <= max_instrs_size);
 
     // Make sure the push_values has not been reallocated. Otherwise iterators are invalid.
     assert(analysis.push_values.size() <= max_args_storage_size);
