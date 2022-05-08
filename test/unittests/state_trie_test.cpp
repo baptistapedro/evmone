@@ -1,10 +1,12 @@
 // evmone: Fast Ethereum Virtual Machine implementation
-// Copyright 2021 The evmone Authors.
+// Copyright 2022 The evmone Authors.
 // SPDX-License-Identifier: Apache-2.0
 
 #include <gtest/gtest.h>
 #include <test/state/state.hpp>
 #include <test/state/trie.hpp>
+#include <test/utils/utils.hpp>
+#include <numeric>
 
 using namespace evmone;
 using namespace evmone::state;
@@ -16,43 +18,10 @@ TEST(state, empty_code_hash)
     EXPECT_EQ(emptyCodeHash, empty);
 }
 
-TEST(state, rlp_v1)
-{
-    const auto expected = from_hex(
-        "f8 44"
-        "80"
-        "01"
-        "a0 56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
-        "a0 c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
-
-    Account a;
-    a.balance = 1;
-    const auto r = rlp::tuple(a.nonce, a.balance,
-        0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421_bytes32,
-        0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470_bytes32);
-    EXPECT_EQ(hex(r), hex(expected));
-    EXPECT_EQ(r.size(), 70);
-
-    EXPECT_EQ(hex(rlp::encode(0x31)), "31");
-}
-
 TEST(state, empty_trie)
 {
-    const auto rlp_null = bytes{0x80};
-    const auto empty_trie_hash = keccak256(rlp_null);
-    EXPECT_EQ(empty_trie_hash, emptyTrieHash);
-
-    Trie trie;
-    EXPECT_EQ(trie.hash(), emptyTrieHash);
-
+    EXPECT_EQ(MPT{}.hash(), emptyTrieHash);
     EXPECT_EQ(state::trie_hash(State{}), emptyTrieHash);
-}
-
-TEST(state, hashed_address)
-{
-    const auto addr = 0x0000000000000000000000000000000000000002_address;
-    const auto hashed_addr = keccak256(addr);
-    EXPECT_EQ(hex(hashed_addr), "d52688a8f926c816ca1e079067caba944f158e764817b83fc43594370ca9cf62");
 }
 
 TEST(state, single_account_v1)
@@ -65,13 +34,13 @@ TEST(state, single_account_v1)
     constexpr auto addr = 0x0000000000000000000000000000000000000002_address;
     state.get_or_create(addr).balance = 1;
 
-    Trie trie;
+    MPT trie;
     const auto xkey = keccak256(addr);
     const auto& a = state.get(addr);
-    const auto xval = rlp::tuple(a.nonce, a.balance,
+    auto xval = rlp::tuple(a.nonce, a.balance,
         0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421_bytes32,
         0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470_bytes32);
-    trie.insert(Path{{xkey.bytes, sizeof(xkey)}}, xval);
+    trie.insert(xkey, std::move(xval));
     EXPECT_EQ(trie.hash(), expected);
 
     EXPECT_EQ(state::trie_hash(state), expected);
@@ -85,10 +54,10 @@ TEST(state, storage_trie_v1)
     const auto key = 0_bytes32;
     const auto value = 0x00000000000000000000000000000000000000000000000000000000000001ff_bytes32;
     const auto xkey = keccak256(key);
-    const auto xvalue = rlp::encode(rlp::trim(value));
+    auto xvalue = rlp::encode(rlp::trim(value));
 
-    Trie trie;
-    trie.insert(xkey, xvalue);
+    MPT trie;
+    trie.insert(xkey, std::move(xvalue));
     EXPECT_EQ(trie.hash(), expected);
 
     std::unordered_map<evmc::bytes32, StorageValue> storage;
@@ -96,122 +65,110 @@ TEST(state, storage_trie_v1)
     EXPECT_EQ(state::trie_hash(storage), expected);
 }
 
-TEST(state, trie_ex1)
+TEST(state_trie, leaf_node_example1)
 {
-    Trie trie;
-    const auto k = to_bytes("\x01\x02\x03");
-    const auto v = to_bytes("hello");
-    trie.insert(Path{k}, v);
+    MPT trie;
+    trie.insert("\x01\x02\x03"_b, "hello"_b);
     EXPECT_EQ(hex(trie.hash()), "82c8fd36022fbc91bd6b51580cfd941d3d9994017d59ab2e8293ae9c94c3ab6e");
 }
 
-TEST(state, trie_branch_node)
+TEST(state_trie, branch_node_example1)
 {
-    const auto k1 = to_bytes("A");
-    const auto k2 = to_bytes("z");
-    const auto v1 = to_bytes("v___________________________1");
-    const auto v2 = to_bytes("v___________________________2");
+    // A trie of single branch node and two leaf nodes with paths of length 2.
+    // The branch node has leaf nodes at positions [4] and [5].
+    // {4:1, 5:a}
 
-    const auto p1 = Path(k1);
-    const auto p2 = Path(k2);
-    EXPECT_EQ(common_prefix(p1, p2).num_nibbles, 0);
-    const auto n1 = p1.nibble(0);
-    const auto n2 = p2.nibble(0);
-    EXPECT_EQ(n1, 4);
-    EXPECT_EQ(n2, 7);
+    auto value1 = "v___________________________1"_b;
+    const auto key1 = "A"_b;
+    const uint8_t path1[]{0x4, 0x1};
+    const bytes encoded_path1{uint8_t(0x30 | path1[1])};
+    const auto leaf_node1 = rlp::tuple(encoded_path1, value1);
+    EXPECT_EQ(hex(leaf_node1), "df319d765f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31");
 
-    const auto lp1 = p1.tail(1);
-    EXPECT_EQ(hex(lp1.encode(false)), "31");
-    const auto lp2 = p2.tail(1);
-    EXPECT_EQ(hex(lp2.encode(false)), "3a");
+    auto value2 = "v___________________________2"_b;
+    const auto key2 = "Z"_b;
+    const uint8_t path2[]{0x5, 0xa};
+    const bytes encoded_path2{uint8_t(0x30 | path2[1])};
+    const auto leaf_node2 = rlp::tuple(encoded_path2, value2);
+    EXPECT_EQ(hex(leaf_node2), "df3a9d765f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32");
 
-    const auto node1 = rlp::tuple(lp1.encode(false), v1);
-    EXPECT_EQ(hex(node1), "df319d765f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31");
-    const auto node2 = rlp::tuple(lp2.encode(false), v2);
-
-    Trie st;
-    st.insert(Path{k1}, v1);
-    st.insert(Path{k2}, v2);
-    EXPECT_EQ(hex(st.hash()), "56e911635579e0f86dce3c116af12b30448e01cc634aac127e037efbd29e7f9f");
+    MPT trie;
+    trie.insert(key1, std::move(value1));
+    trie.insert(key2, std::move(value2));
+    EXPECT_EQ(hex(trie.hash()), "1aaa6f712413b9a115730852323deb5f5d796c29151a60a1f55f41a25354cd26");
 }
 
-TEST(state, trie_extension_node)
+TEST(state_trie, extension_node_example1)
 {
-    const auto k1 = to_bytes("XXA");
-    const auto k2 = to_bytes("XXZ");
-    const auto v1 = to_bytes("v___________________________1");
-    const auto v2 = to_bytes("v___________________________2");
+    // A trie of an extension node followed by a branch node with
+    // two leafs with single nibble paths.
+    // 5858:{4:1, 5:a}
 
-    const auto p1 = Path(k1);
-    const auto p2 = Path(k2);
-    const auto common_p = common_prefix(p1, p2);
-    EXPECT_EQ(common_p.num_nibbles, 4);
-    const auto n1 = p1.nibble(common_p.num_nibbles);
-    const auto n2 = p2.nibble(common_p.num_nibbles);
-    EXPECT_EQ(n1, 4);
-    EXPECT_EQ(n2, 5);
+    auto value1 = "v___________________________1"_b;
+    const auto key1 = "XXA"_b;
+    [[maybe_unused]] const uint8_t path1[]{0x5, 0x8, 0x5, 0x8, 0x4, 0x1};
 
-    const auto hp1 = p1.tail(common_p.num_nibbles + 1);
-    EXPECT_EQ(hex(hp1.encode(false)), "31");
-    const auto hp2 = p2.tail(common_p.num_nibbles + 1);
+    auto value2 = "v___________________________2"_b;
+    const auto key2 = "XXZ"_b;
+    [[maybe_unused]] const uint8_t path2[]{0x5, 0x8, 0x5, 0x8, 0x5, 0xa};
 
-    const auto node1 = rlp::tuple(hp1.encode(false), v1);
-    EXPECT_EQ(hex(node1), "df319d765f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31");
-    const auto node2 = rlp::tuple(hp2.encode(false), v2);
+    const bytes encoded_common_path{0x00, 0x58, 0x58};
 
+    // The hash of the branch node. See the branch_node_example test.
     constexpr auto branch_node_hash =
         0x1aaa6f712413b9a115730852323deb5f5d796c29151a60a1f55f41a25354cd26_bytes32;
 
-    const auto ext = rlp::tuple(common_p.encode(true), branch_node_hash);
-    EXPECT_EQ(
-        hex(keccak256(ext)), "3eefc183db443d44810b7d925684eb07256e691d5c9cb13215660107121454f9");
+    const auto extension_node = rlp::tuple(encoded_common_path, branch_node_hash);
+    EXPECT_EQ(hex(keccak256(extension_node)),
+        "3eefc183db443d44810b7d925684eb07256e691d5c9cb13215660107121454f9");
 
-    Trie st;
-    st.insert(p1, v1);
-    st.insert(p2, v2);
-    EXPECT_EQ(hex(st.hash()), "3eefc183db443d44810b7d925684eb07256e691d5c9cb13215660107121454f9");
+    MPT trie;
+    trie.insert(key1, std::move(value1));
+    trie.insert(key2, std::move(value2));
+    EXPECT_EQ(hex(trie.hash()), "3eefc183db443d44810b7d925684eb07256e691d5c9cb13215660107121454f9");
 }
 
-
-TEST(state, trie_extension_node2)
+TEST(state_trie, extension_node_example2)
 {
-    const auto k1 = to_bytes("XXA");
-    const auto k2 = to_bytes("XYZ");
-    const auto v1 = to_bytes("v___________________________1");
-    const auto v2 = to_bytes("v___________________________2");
+    // A trie of an extension node followed by a branch node with
+    // two leafs with longer paths.
+    // 585:{8:4a, 9:5a}
 
-    const auto p1 = Path(k1);
-    const auto p2 = Path(k2);
-    const auto prefix = common_prefix(p1, p2);
+    auto value1 = "v___________________________1"_b;
+    const auto key1 = "XXA"_b;
+    const uint8_t path1[]{0x5, 0x8, 0x5, 0x8, 0x4, 0x1};
 
-    const auto n1 = p1.nibble(prefix.num_nibbles);
-    const auto n2 = p2.nibble(prefix.num_nibbles);
-    EXPECT_EQ(n1, 8);
-    EXPECT_EQ(n2, 9);
+    auto value2 = "v___________________________2"_b;
+    const auto key2 = "XYZ"_b;
+    const uint8_t path2[]{0x5, 0x8, 0x5, 0x9, 0x5, 0xa};
 
-    const auto hp1 = p1.tail(prefix.num_nibbles + 1);
-    EXPECT_EQ(hex(hp1.encode(false)), "2041");
-    const auto hp2 = p2.tail(prefix.num_nibbles + 1);
+    const uint8_t common_path[]{0x5, 0x8, 0x5};
+    const bytes encoded_path1{0x20, uint8_t((path1[4] << 4) | path1[5])};
+    EXPECT_EQ(hex(encoded_path1), "2041");
+    const bytes encoded_path2{0x20, uint8_t((path2[4] << 4) | path2[5])};
+    EXPECT_EQ(hex(encoded_path2), "205a");
 
-    const auto node1 = rlp::tuple(hp1.encode(false), v1);
+    const auto node1 = rlp::tuple(encoded_path1, value1);
     EXPECT_EQ(hex(node1), "e18220419d765f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31");
-    const auto node2 = rlp::tuple(hp2.encode(false), v2);
+    const auto node2 = rlp::tuple(encoded_path2, value2);
     EXPECT_EQ(hex(node2), "e182205a9d765f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32");
 
     constexpr auto branch_node_hash =
         0x01746f8ab5a4cc5d6175cbd9ea9603357634ec06b2059f90710243f098e0ee82_bytes32;
 
-    const auto ext = rlp::tuple(prefix.encode(true), branch_node_hash);
-    EXPECT_EQ(
-        hex(keccak256(ext)), "ac28c08fa3ff1d0d2cc9a6423abb7af3f4dcc37aa2210727e7d3009a9b4a34e8");
+    const bytes encoded_common_path{
+        uint8_t(0x10 | common_path[0]), uint8_t((common_path[1] << 4) | common_path[2])};
+    const auto extension_node = rlp::tuple(encoded_common_path, branch_node_hash);
+    EXPECT_EQ(hex(keccak256(extension_node)),
+        "ac28c08fa3ff1d0d2cc9a6423abb7af3f4dcc37aa2210727e7d3009a9b4a34e8");
 
-    Trie st;
-    st.insert(p1, v1);
-    st.insert(p2, v2);
-    EXPECT_EQ(hex(st.hash()), "ac28c08fa3ff1d0d2cc9a6423abb7af3f4dcc37aa2210727e7d3009a9b4a34e8");
+    MPT trie;
+    trie.insert(key1, std::move(value1));
+    trie.insert(key2, std::move(value2));
+    EXPECT_EQ(hex(trie.hash()), "ac28c08fa3ff1d0d2cc9a6423abb7af3f4dcc37aa2210727e7d3009a9b4a34e8");
 }
 
-TEST(state, trie_3keys_topologies)
+TEST(state_trie, trie_topologies)
 {
     struct KVH
     {
@@ -221,7 +178,7 @@ TEST(state, trie_3keys_topologies)
     };
 
     // clang-format off
-    KVH tests[][3] = {
+    std::vector<KVH> tests[] = {
         { // {0:0, 7:0, f:0}
             {"00", "v_______________________0___0", "5cb26357b95bb9af08475be00243ceb68ade0b66b5cd816b0c18a18c612d2d21"},
             {"70", "v_______________________0___1", "8ff64309574f7a437a7ad1628e690eb7663cfde10676f8a904a8c8291dbc1603"},
@@ -317,52 +274,6 @@ TEST(state, trie_3keys_topologies)
             {"1234ea", "x___________________________1", "2f502917f3ba7d328c21c8b45ee0f160652e68450332c166d4ad02d1afe31862"},
             {"2aaaaa", "x___________________________2", "5f5989b820ff5d76b7d49e77bb64f26602294f6c42a1a3becc669cd9e0dc8ec9"},
         },
-    };
-    // clang-format on
-
-    for (const auto& test : tests)
-    {
-        // Insert in order and check hash at every step.
-        {
-            Trie st;
-            for (const auto& kv : test)
-            {
-                const auto k = from_hex(kv.key_hex);
-                const auto v = to_bytes(kv.value);
-                st.insert(Path{k}, v);
-                EXPECT_EQ(hex(st.hash()), kv.hash_hex);
-            }
-        }
-
-        // Check if all insert order permutations give the same final hash.
-        size_t order[] = {0, 1, 2};
-        while (std::next_permutation(std::begin(order), std::end(order)))
-        {
-            Trie trie;
-            for (size_t i = 0; i < std::size(test); ++i)
-            {
-                const auto k = from_hex(test[order[i]].key_hex);
-                const auto v = to_bytes(test[order[i]].value);
-                trie.insert(Path{k}, v);
-            }
-            EXPECT_EQ(hex(trie.hash()), test[2].hash_hex);
-        }
-    }
-}
-
-TEST(state, trie_4keys_extended_node_split)
-{
-    // TODO: Move the test cases to trie_3keys_topologies by using std::span or
-    //       std::initializer_list.
-    struct KVH
-    {
-        const char* key_hex;
-        const char* value;
-        const char* hash_hex;
-    };
-
-    // clang-format off
-    KVH tests[][4] = {
         {
             {"000000", "x___________________________0", "3b32b7af0bddc7940e7364ee18b5a59702c1825e469452c8483b9c4e0218b55a"},
             {"1234da", "x___________________________1", "3ab152a1285dca31945566f872c1cc2f17a770440eda32aeee46a5e91033dde2"},
@@ -410,13 +321,25 @@ TEST(state, trie_4keys_extended_node_split)
 
     for (const auto& test : tests)
     {
-        Trie st;
-        for (const auto& kv : test)
+        // Insert in order and check hash at every step.
         {
-            const auto k = from_hex(kv.key_hex);
-            const auto v = to_bytes(kv.value);
-            st.insert(Path{k}, v);
-            EXPECT_EQ(hex(st.hash()), kv.hash_hex);
+            MPT trie;
+            for (const auto& kv : test)
+            {
+                trie.insert(from_hex(kv.key_hex), to_bytes(kv.value));
+                EXPECT_EQ(hex(trie.hash()), kv.hash_hex);
+            }
+        }
+
+        // Check if all insert order permutations give the same final hash.
+        std::vector<size_t> order(test.size());
+        std::iota(order.begin(), order.end(), size_t{0});
+        while (std::next_permutation(order.begin(), order.end()))
+        {
+            MPT trie;
+            for (size_t i = 0; i < test.size(); ++i)
+                trie.insert(from_hex(test[order[i]].key_hex), to_bytes(test[order[i]].value));
+            EXPECT_EQ(hex(trie.hash()), test.back().hash_hex);
         }
     }
 }

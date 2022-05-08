@@ -13,6 +13,32 @@ using namespace evmone;
 using namespace evmone::state;
 using namespace std::string_view_literals;
 
+static constexpr evmc_revision from_string(std::string_view s) noexcept
+{
+    if (s == "Frontier")
+        return EVMC_FRONTIER;
+    if (s == "Homestead")
+        return EVMC_HOMESTEAD;
+    if (s == "EIP150")
+        return EVMC_TANGERINE_WHISTLE;
+    if (s == "EIP158")
+        return EVMC_SPURIOUS_DRAGON;
+    if (s == "Byzantium")
+        return EVMC_BYZANTIUM;
+    if (s == "Constantinople")
+        return EVMC_CONSTANTINOPLE;
+    if (s == "ConstantinopleFix")
+        return EVMC_PETERSBURG;
+    if (s == "Istanbul")
+        return EVMC_ISTANBUL;
+    if (s == "Berlin")
+        return EVMC_BERLIN;
+    if (s == "London")
+        return EVMC_LONDON;
+    assert(false && "unknown revision");
+    __builtin_unreachable();
+}
+
 template <typename T>
 T from_json(const json::json& j) = delete;
 
