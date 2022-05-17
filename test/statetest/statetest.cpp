@@ -120,6 +120,14 @@ void from_json(const json::json& j, TestTxParams& o)
     o.value = j["value"].get<size_t>();
 }
 
+void from_json(const json::json& j, TestExpectations& o)
+{
+    o.indexes = j["indexes"].get<TestTxParams>();
+    o.state_hash = from_json<hash256>(j["hash"]);
+    o.logs_hash = from_json<hash256>(j["logs"]);
+    o.exception = j.contains("expectException");
+}
+
 void from_json(const json::json& j, StateTransitionTest& o)
 {
     const auto& j_t = j.begin().value();  // Content is in a dict with the test name.
@@ -204,18 +212,15 @@ static void run_state_test(const json::json& j)
             //     ++i;
             //     continue;
             // }
-            const auto expected_state_hash = from_json<hash256>(post["hash"]);
-            const auto indexes = post["indexes"].get<TestTxParams>();
-            test.tx.data = from_json<bytes>(tr["data"][indexes.data]);
-            test.tx.gas_limit = from_json<int64_t>(tr["gasLimit"][indexes.gas_limit]);
-
-            const auto expect_tx_exception = post.contains("expectException");
-            test.tx.value = from_json<intx::uint256>(tr["value"][indexes.value]);
+            const auto expected = post.get<TestExpectations>();
+            test.tx.data = from_json<bytes>(tr["data"][expected.indexes.data]);
+            test.tx.gas_limit = from_json<int64_t>(tr["gasLimit"][expected.indexes.gas_limit]);
+            test.tx.value = from_json<intx::uint256>(tr["value"][expected.indexes.value]);
 
             test.tx.access_list.clear();
             if (access_lists_it != tr.end())
             {
-                for (const auto& [_2, a] : access_lists_it.value()[indexes.data].items())
+                for (const auto& [_2, a] : access_lists_it.value()[expected.indexes.data].items())
                 {
                     test.tx.access_list.push_back({from_json<evmc::address>(a["address"]), {}});
                     auto& storage_access_list = test.tx.access_list.back().second;
@@ -227,7 +232,7 @@ static void run_state_test(const json::json& j)
             auto state = test.pre_state;
 
             const auto tx_status = state::transition(state, test.block, test.tx, rev, vm);
-            EXPECT_NE(tx_status.success, expect_tx_exception);
+            EXPECT_NE(tx_status.success, expected.exception);
 
             std::ostringstream state_dump;
 
@@ -245,12 +250,11 @@ static void run_state_test(const json::json& j)
                 }
             }
 
-            EXPECT_EQ(state::trie_hash(state), expected_state_hash) << state_dump.str();
+            EXPECT_EQ(state::trie_hash(state), expected.state_hash) << state_dump.str();
 
             const auto logs_hash =
                 (tx_status.logs_hash != hash256{}) ? tx_status.logs_hash : keccak256(bytes{0xc0});
-            const auto expected_logs_hash = from_json<hash256>(post["logs"]);
-            EXPECT_EQ(logs_hash, expected_logs_hash);
+            EXPECT_EQ(logs_hash, expected.logs_hash);
 
             ++i;
         }
