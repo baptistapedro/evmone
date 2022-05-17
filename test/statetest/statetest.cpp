@@ -39,6 +39,28 @@ static constexpr evmc_revision from_string(std::string_view s) noexcept
     __builtin_unreachable();
 }
 
+struct TestTxParams
+{
+    size_t data;
+    size_t gas_limit;
+    size_t value;
+};
+
+struct TestExpectations
+{
+    TestTxParams indexes;
+    hash256 state_hash;
+    hash256 logs_hash;
+    bool exception;
+};
+
+struct StateTransitionTest
+{
+    State pre_state;
+    Tx tx;
+    BlockInfo block;
+};
+
 template <typename T>
 T from_json(const json::json& j) = delete;
 
@@ -97,19 +119,21 @@ uint64_t from_json<uint64_t>(const json::json& j)
     return static_cast<uint64_t>(std::stoull(j.get<std::string>(), nullptr, 16));
 }
 
-static void run_state_test(const json::json& j)
+void from_json(const json::json& j, TestTxParams& o)
 {
-    SCOPED_TRACE(j.begin().key());
-    const auto& _t = j.begin().value();
-    const auto& tr = _t["transaction"];
-    const auto& pre = _t["pre"];
+    o.data = j["data"].get<size_t>();
+    o.gas_limit = j["gas"].get<size_t>();
+    o.value = j["value"].get<size_t>();
+}
 
-    state::State pre_state;
+void from_json(const json::json& j, StateTransitionTest& o)
+{
+    const auto& j_t = j.begin().value();  // Content is in a dict with the test name.
 
-    for (const auto& [j_addr, j_acc] : pre.items())
+    for (const auto& [j_addr, j_acc] : j_t["pre"].items())
     {
         const auto addr = from_json<address>(j_addr);
-        auto& acc = pre_state.get_or_create(addr);
+        auto& acc = o.pre_state.get_or_create(addr);
         acc.balance = from_json<intx::uint256>(j_acc["balance"]);
         acc.nonce = from_json<uint64_t>(j_acc["nonce"]);
         acc.code = from_json<bytes>(j_acc["code"]);
@@ -123,42 +147,51 @@ static void run_state_test(const json::json& j)
         }
     }
 
-    state::Tx tx;
     // Common transaction part.
-    if (tr.contains("gasPrice"))
+    const auto& j_tx = j_t["transaction"];
+    if (j_tx.contains("gasPrice"))
     {
-        tx.kind = Tx::Kind::legacy;
-        tx.max_gas_price = from_json<intx::uint256>(tr["gasPrice"]);
-        tx.max_priority_gas_price = tx.max_gas_price;
+        o.tx.kind = Tx::Kind::legacy;
+        o.tx.max_gas_price = from_json<intx::uint256>(j_tx["gasPrice"]);
+        o.tx.max_priority_gas_price = o.tx.max_gas_price;
     }
     else
     {
-        tx.kind = Tx::Kind::eip1559;
-        tx.max_gas_price = from_json<intx::uint256>(tr["maxFeePerGas"]);
-        tx.max_priority_gas_price = from_json<intx::uint256>(tr["maxPriorityFeePerGas"]);
+        o.tx.kind = Tx::Kind::eip1559;
+        o.tx.max_gas_price = from_json<intx::uint256>(j_tx["maxFeePerGas"]);
+        o.tx.max_priority_gas_price = from_json<intx::uint256>(j_tx["maxPriorityFeePerGas"]);
     }
-    tx.nonce = from_json<uint64_t>(tr["nonce"]);
-    tx.sender = from_json<evmc::address>(tr["sender"]);
-    if (!tr["to"].get<std::string>().empty())
-        tx.to = from_json<evmc::address>(tr["to"]);
+    o.tx.nonce = from_json<uint64_t>(j_tx["nonce"]);
+    o.tx.sender = from_json<evmc::address>(j_tx["sender"]);
+    if (!j_tx["to"].get<std::string>().empty())
+        o.tx.to = from_json<evmc::address>(j_tx["to"]);
+
+    const auto& env = j_t["env"];
+    o.block.gas_limit = from_json<int64_t>(env["currentGasLimit"]);
+    o.block.coinbase = from_json<evmc::address>(env["currentCoinbase"]);
+    o.block.base_fee = from_json<uint64_t>(env["currentBaseFee"]);
+    o.block.difficulty = from_json<evmc::uint256be>(env["currentDifficulty"]);
+    o.block.number = from_json<int64_t>(env["currentNumber"]);
+    o.block.timestamp = from_json<int64_t>(env["currentTimestamp"]);
+
+    // TODO: Chain ID is expected to be 1.
+    o.block.chain_id = {};
+    o.block.chain_id.bytes[31] = 1;
+}
+
+static void run_state_test(const json::json& j)
+{
+    SCOPED_TRACE(j.begin().key());
+    const auto& _t = j.begin().value();
+    const auto& tr = _t["transaction"];
+
+    auto test = j.get<StateTransitionTest>();
 
     evmc::VM vm{evmc_create_evmone(), {
                                           {"O", "0"},
                                           // {"trace", "1"},
                                       }};
 
-    BlockInfo block;
-    const auto& env = _t["env"];
-    block.gas_limit = from_json<int64_t>(env["currentGasLimit"]);
-    block.coinbase = from_json<evmc::address>(env["currentCoinbase"]);
-    block.base_fee = from_json<uint64_t>(env["currentBaseFee"]);
-    block.difficulty = from_json<evmc::uint256be>(env["currentDifficulty"]);
-    block.number = from_json<int64_t>(env["currentNumber"]);
-    block.timestamp = from_json<int64_t>(env["currentTimestamp"]);
-
-    // TODO: Chain ID is expected to be 1.
-    block.chain_id = {};
-    block.chain_id.bytes[31] = 1;
 
     const auto access_lists_it = tr.find("accessLists");
 
@@ -178,15 +211,15 @@ static void run_state_test(const json::json& j)
             //     continue;
             // }
             const auto expected_state_hash = from_json<hash256>(post["hash"]);
-            const auto& indexes = post["indexes"];
-            const auto data_index = indexes["data"].get<size_t>();
-            tx.data = from_json<bytes>(tr["data"][data_index]);
-            tx.gas_limit = from_json<int64_t>(tr["gasLimit"][indexes["gas"].get<size_t>()]);
+            const auto indexes = post["indexes"].get<TestTxParams>();
+            test.tx.data = from_json<bytes>(tr["data"][indexes.data]);
+            test.tx.gas_limit = from_json<int64_t>(tr["gasLimit"][indexes.gas_limit]);
 
             const auto expect_tx_exception = post.contains("expectException");
             try
             {
-                tx.value = from_json<intx::uint256>(tr["value"][indexes["value"].get<size_t>()]);
+                test.tx.value =
+                    from_json<intx::uint256>(tr["value"][indexes.value]);
             }
             catch (const std::range_error&)
             {
@@ -195,21 +228,21 @@ static void run_state_test(const json::json& j)
                 throw;
             }
 
-            tx.access_list.clear();
+            test.tx.access_list.clear();
             if (access_lists_it != tr.end())
             {
-                for (const auto& [_2, a] : access_lists_it.value()[data_index].items())
+                for (const auto& [_2, a] : access_lists_it.value()[indexes.data].items())
                 {
-                    tx.access_list.push_back({from_json<evmc::address>(a["address"]), {}});
-                    auto& storage_access_list = tx.access_list.back().second;
+                    test.tx.access_list.push_back({from_json<evmc::address>(a["address"]), {}});
+                    auto& storage_access_list = test.tx.access_list.back().second;
                     for (const auto& [_3, storage_key] : a["storageKeys"].items())
                         storage_access_list.push_back(from_json<bytes32>(storage_key));
                 }
             }
 
-            auto state = pre_state;
+            auto state = test.pre_state;
 
-            const auto tx_status = state::transition(state, block, tx, rev, vm);
+            const auto tx_status = state::transition(state, test.block, test.tx, rev, vm);
             EXPECT_NE(tx_status.success, expect_tx_exception);
 
             std::ostringstream state_dump;
@@ -249,10 +282,7 @@ class StateTest : public testing::Test
 public:
     explicit StateTest(fs::path json_test_file) : m_json_test_file{std::move(json_test_file)} {}
 
-    void TestBody() override
-    {
-        run_state_test(json::json::parse(std::ifstream{m_json_test_file}));
-    }
+    void TestBody() final { run_state_test(json::json::parse(std::ifstream{m_json_test_file})); }
 };
 
 int main(int argc, char* argv[])
