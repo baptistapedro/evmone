@@ -251,9 +251,7 @@ public:
 
     void TestBody() override
     {
-        json::json j;
-        std::ifstream{m_json_test_file} >> j;
-        run_state_test(j);
+        run_state_test(json::json::parse(std::ifstream{m_json_test_file}));
     }
 };
 
@@ -262,7 +260,6 @@ int main(int argc, char* argv[])
     constexpr auto known_passing_tests =
         "*.*:"
         "-"
-        // "stRandom*.*:"  // rlp encoding issue
         // Slow tests.
         "stCreateTest.CreateOOGafterMaxCodesize:"      // pass
         "stQuadraticComplexityTest.Call50000_sha256:"  // pass
