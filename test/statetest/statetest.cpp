@@ -73,11 +73,18 @@ struct MultiTx : Tx
     }
 };
 
+struct TestPost
+{
+    evmc_revision rev;
+    std::vector<TestExpectations> cases;
+};
+
 struct StateTransitionTest
 {
     State pre_state;
     MultiTx multi_tx;
     BlockInfo block;
+    std::vector<TestPost> posts;
 };
 
 template <typename T>
@@ -227,6 +234,14 @@ static void from_json(const json::json& j, StateTransitionTest& o)
     // TODO: Chain ID is expected to be 1.
     o.block.chain_id = {};
     o.block.chain_id.bytes[31] = 1;
+
+    for (const auto& [rev_name, posts] : j_t["post"].items())
+    {
+        auto& p = o.posts.emplace_back();
+        p.rev = from_string(rev_name);
+        for (const auto& post : posts)
+            p.cases.emplace_back(post.get<TestExpectations>());
+    }
 }
 
 static void run_state_test(const json::json& j)
@@ -240,22 +255,20 @@ static void run_state_test(const json::json& j)
                                           // {"trace", "1"},
                                       }};
 
-    for (const auto& [rev_name, posts] : j.begin().value()["post"].items())
+    for (const auto& [rev, cases] : test.posts)
     {
         // if (rev_name != "London")
         //     continue;
 
-        SCOPED_TRACE(rev_name);
-        const auto rev = from_string(rev_name);
+        SCOPED_TRACE(rev);
         int i = 0;
-        for (const auto& post : posts)
+        for (const auto& expected : cases)
         {
             // if (i != 0)
             // {
             //     ++i;
             //     continue;
             // }
-            const auto expected = post.get<TestExpectations>();
             const auto tx = test.multi_tx.get(expected.indexes);
             auto state = test.pre_state;
 
@@ -264,7 +277,7 @@ static void run_state_test(const json::json& j)
 
             std::ostringstream state_dump;
 
-            state_dump << "--- " << rev_name << " " << i << "\n";
+            state_dump << "--- " << rev << " " << i << "\n";
             for (const auto& [addr, acc] : state.get_accounts())
             {
                 state_dump << evmc::hex({addr.bytes, sizeof(addr.bytes)}) << " [" << acc.nonce
