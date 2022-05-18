@@ -54,10 +54,29 @@ struct TestExpectations
     bool exception;
 };
 
+struct MultiTx : Tx
+{
+    std::vector<AccessList> access_lists;
+    std::vector<bytes> datas;
+    std::vector<int64_t> gas_limits;
+    std::vector<intx::uint256> values;
+
+    [[nodiscard]] Tx get(TestTxParams indexes) const noexcept
+    {
+        Tx tx{*this};
+        if (!access_lists.empty())
+            tx.access_list = access_lists.at(indexes.data);
+        tx.data = datas.at(indexes.data);
+        tx.gas_limit = gas_limits.at(indexes.gas_limit);
+        tx.value = values.at(indexes.value);
+        return tx;
+    }
+};
+
 struct StateTransitionTest
 {
     State pre_state;
-    Tx tx;
+    MultiTx multi_tx;
     BlockInfo block;
 };
 
@@ -113,14 +132,14 @@ uint64_t from_json<uint64_t>(const json::json& j)
     return static_cast<uint64_t>(std::stoull(j.get<std::string>(), nullptr, 16));
 }
 
-void from_json(const json::json& j, TestTxParams& o)
+static void from_json(const json::json& j, TestTxParams& o)
 {
     o.data = j["data"].get<size_t>();
     o.gas_limit = j["gas"].get<size_t>();
     o.value = j["value"].get<size_t>();
 }
 
-void from_json(const json::json& j, TestExpectations& o)
+static void from_json(const json::json& j, TestExpectations& o)
 {
     o.indexes = j["indexes"].get<TestTxParams>();
     o.state_hash = from_json<hash256>(j["hash"]);
@@ -128,7 +147,53 @@ void from_json(const json::json& j, TestExpectations& o)
     o.exception = j.contains("expectException");
 }
 
-void from_json(const json::json& j, StateTransitionTest& o)
+static void from_json(const json::json& j, AccessList& o)
+{
+    for (const auto& a : j)
+    {
+        o.push_back({from_json<evmc::address>(a["address"]), {}});
+        auto& storage_access_list = o.back().second;
+        for (const auto& storage_key : a["storageKeys"])
+            storage_access_list.emplace_back(from_json<hash256>(storage_key));
+    }
+}
+
+static void from_json(const json::json& j, MultiTx& o)
+{
+    if (j.contains("gasPrice"))
+    {
+        o.kind = Tx::Kind::legacy;
+        o.max_gas_price = from_json<intx::uint256>(j["gasPrice"]);
+        o.max_priority_gas_price = o.max_gas_price;
+    }
+    else
+    {
+        o.kind = Tx::Kind::eip1559;
+        o.max_gas_price = from_json<intx::uint256>(j["maxFeePerGas"]);
+        o.max_priority_gas_price = from_json<intx::uint256>(j["maxPriorityFeePerGas"]);
+    }
+    o.nonce = from_json<uint64_t>(j["nonce"]);
+    o.sender = from_json<evmc::address>(j["sender"]);
+    if (!j["to"].get<std::string>().empty())
+        o.to = from_json<evmc::address>(j["to"]);
+
+    for (const auto& j_data : j.at("data"))
+        o.datas.emplace_back(from_json<bytes>(j_data));
+
+    if (j.contains("accessLists"))
+    {
+        for (const auto& j_access_list : j["accessLists"])
+            o.access_lists.emplace_back(j_access_list.get<AccessList>());
+    }
+
+    for (const auto& j_gas_limit : j.at("gasLimit"))
+        o.gas_limits.emplace_back(from_json<int64_t>(j_gas_limit));
+
+    for (const auto& j_value : j.at("value"))
+        o.values.emplace_back(from_json<intx::uint256>(j_value));
+}
+
+static void from_json(const json::json& j, StateTransitionTest& o)
 {
     const auto& j_t = j.begin().value();  // Content is in a dict with the test name.
 
@@ -149,24 +214,7 @@ void from_json(const json::json& j, StateTransitionTest& o)
         }
     }
 
-    // Common transaction part.
-    const auto& j_tx = j_t["transaction"];
-    if (j_tx.contains("gasPrice"))
-    {
-        o.tx.kind = Tx::Kind::legacy;
-        o.tx.max_gas_price = from_json<intx::uint256>(j_tx["gasPrice"]);
-        o.tx.max_priority_gas_price = o.tx.max_gas_price;
-    }
-    else
-    {
-        o.tx.kind = Tx::Kind::eip1559;
-        o.tx.max_gas_price = from_json<intx::uint256>(j_tx["maxFeePerGas"]);
-        o.tx.max_priority_gas_price = from_json<intx::uint256>(j_tx["maxPriorityFeePerGas"]);
-    }
-    o.tx.nonce = from_json<uint64_t>(j_tx["nonce"]);
-    o.tx.sender = from_json<evmc::address>(j_tx["sender"]);
-    if (!j_tx["to"].get<std::string>().empty())
-        o.tx.to = from_json<evmc::address>(j_tx["to"]);
+    o.multi_tx = j_t["transaction"].get<MultiTx>();
 
     const auto& env = j_t["env"];
     o.block.gas_limit = from_json<int64_t>(env["currentGasLimit"]);
@@ -184,8 +232,6 @@ void from_json(const json::json& j, StateTransitionTest& o)
 static void run_state_test(const json::json& j)
 {
     SCOPED_TRACE(j.begin().key());
-    const auto& _t = j.begin().value();
-    const auto& tr = _t["transaction"];
 
     auto test = j.get<StateTransitionTest>();
 
@@ -194,10 +240,7 @@ static void run_state_test(const json::json& j)
                                           // {"trace", "1"},
                                       }};
 
-
-    const auto access_lists_it = tr.find("accessLists");
-
-    for (const auto& [rev_name, posts] : _t["post"].items())
+    for (const auto& [rev_name, posts] : j.begin().value()["post"].items())
     {
         // if (rev_name != "London")
         //     continue;
@@ -205,7 +248,7 @@ static void run_state_test(const json::json& j)
         SCOPED_TRACE(rev_name);
         const auto rev = from_string(rev_name);
         int i = 0;
-        for (const auto& [_, post] : posts.items())
+        for (const auto& post : posts)
         {
             // if (i != 0)
             // {
@@ -213,25 +256,10 @@ static void run_state_test(const json::json& j)
             //     continue;
             // }
             const auto expected = post.get<TestExpectations>();
-            test.tx.data = from_json<bytes>(tr["data"][expected.indexes.data]);
-            test.tx.gas_limit = from_json<int64_t>(tr["gasLimit"][expected.indexes.gas_limit]);
-            test.tx.value = from_json<intx::uint256>(tr["value"][expected.indexes.value]);
-
-            test.tx.access_list.clear();
-            if (access_lists_it != tr.end())
-            {
-                for (const auto& [_2, a] : access_lists_it.value()[expected.indexes.data].items())
-                {
-                    test.tx.access_list.push_back({from_json<evmc::address>(a["address"]), {}});
-                    auto& storage_access_list = test.tx.access_list.back().second;
-                    for (const auto& [_3, storage_key] : a["storageKeys"].items())
-                        storage_access_list.push_back(from_json<bytes32>(storage_key));
-                }
-            }
-
+            const auto tx = test.multi_tx.get(expected.indexes);
             auto state = test.pre_state;
 
-            const auto tx_status = state::transition(state, test.block, test.tx, rev, vm);
+            const auto tx_status = state::transition(state, test.block, tx, rev, vm);
             EXPECT_NE(tx_status.success, expected.exception);
 
             std::ostringstream state_dump;
