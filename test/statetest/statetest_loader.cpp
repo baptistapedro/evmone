@@ -11,46 +11,10 @@ namespace json = nlohmann;
 namespace evmone
 {
 using namespace evmone::state;
-
+namespace
+{
 template <typename T>
 T from_json(const json::json& j) = delete;
-
-template <>
-address from_json<address>(const json::json& j)
-{
-    const auto s = j.get<std::string>();
-    if (s.empty())
-        return {};
-    assert(s.size() == 42);
-    return evmc::literals::internal::from_hex<address>(s.c_str() + 2);
-}
-
-template <>
-hash256 from_json<hash256>(const json::json& j)
-{
-    const auto b = from_hex(j.get<std::string>());
-    assert(bytes.size() <= 32);
-    hash256 h{};
-    std::memcpy(&h.bytes[32 - b.size()], b.data(), b.size());
-    return h;
-}
-
-template <>
-intx::uint256 from_json<intx::uint256>(const json::json& j)
-{
-    const auto s = j.get<std::string>();
-    std::string_view v = s;
-    static constexpr std::string_view bigint_marker{"0x:bigint "};
-    if (v.substr(0, bigint_marker.size()) == bigint_marker)
-        return std::numeric_limits<intx::uint256>::max();  // Fake it
-    return intx::from_string<intx::uint256>(s);
-}
-
-template <>
-bytes from_json<bytes>(const json::json& j)
-{
-    return from_hex(j.get<std::string>());
-}
 
 template <>
 int64_t from_json<int64_t>(const json::json& j)
@@ -63,18 +27,57 @@ uint64_t from_json<uint64_t>(const json::json& j)
 {
     return static_cast<uint64_t>(std::stoull(j.get<std::string>(), nullptr, 16));
 }
-}  // namespace evmone
 
-static void from_json(const json::json& j, evmone::state::AccessList& o)
+template <>
+bytes from_json<bytes>(const json::json& j)
 {
+    return from_hex(j.get<std::string>());
+}
+
+template <>
+address from_json<address>(const json::json& j)
+{
+    const auto s = j.get<std::string>();
+    assert(s.size() == 42);
+    return evmc::literals::internal::from_hex<address>(s.c_str() + 2);
+}
+
+template <>
+hash256 from_json<hash256>(const json::json& j)
+{
+    const auto b = from_json<bytes>(j);
+    assert(b.size() <= 32);
+    hash256 h{};
+    std::memcpy(&h.bytes[32 - b.size()], b.data(), b.size());
+    return h;
+}
+
+template <>
+intx::uint256 from_json<intx::uint256>(const json::json& j)
+{
+    const auto s = j.get<std::string>();
+    static constexpr std::string_view bigint_marker{"0x:bigint "};
+    if (std::string_view{s}.substr(0, bigint_marker.size()) == bigint_marker)
+        return std::numeric_limits<intx::uint256>::max();  // Fake it
+    return intx::from_string<intx::uint256>(s);
+}
+
+template <>
+AccessList from_json<AccessList>(const json::json& j)
+{
+    AccessList o;
     for (const auto& a : j)
     {
-        o.push_back({evmone::from_json<evmone::address>(a["address"]), {}});
+        o.push_back({from_json<address>(a.at("address")), {}});
         auto& storage_access_list = o.back().second;
-        for (const auto& storage_key : a["storageKeys"])
+        for (const auto& storage_key : a.at("storageKeys"))
             storage_access_list.emplace_back(evmone::from_json<evmone::hash256>(storage_key));
     }
+    return o;
 }
+}  // namespace
+}  // namespace evmone
+
 
 namespace evmone::test
 {
@@ -131,7 +134,7 @@ static void from_json(const json::json& j, MultiTx& o)
     if (j.contains("accessLists"))
     {
         for (const auto& j_access_list : j["accessLists"])
-            o.access_lists.emplace_back(j_access_list.get<AccessList>());
+            o.access_lists.emplace_back(from_json<AccessList>(j_access_list));
     }
 
     for (const auto& j_gas_limit : j.at("gasLimit"))
@@ -192,12 +195,7 @@ static void from_json(const json::json& j, StateTransitionTest& o)
     o.block.chain_id.bytes[31] = 1;
 
     for (const auto& [rev_name, posts] : j_t["post"].items())
-    {
-        auto& p = o.posts.emplace_back();
-        p.rev = to_rev(rev_name);
-        for (const auto& post : posts)
-            p.cases.emplace_back(post.get<TestExpectations>());
-    }
+        o.posts.push_back({to_rev(rev_name), posts.get<std::vector<TestExpectations>>()});
 }
 
 StateTransitionTest load_state_test(const fs::path& test_file)
