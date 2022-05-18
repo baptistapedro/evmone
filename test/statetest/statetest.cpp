@@ -244,12 +244,15 @@ static void from_json(const json::json& j, StateTransitionTest& o)
     }
 }
 
-static void run_state_test(const json::json& j)
+namespace fs = std::filesystem;
+
+static StateTransitionTest load_state_test(const fs::path& test_file)
 {
-    SCOPED_TRACE(j.begin().key());
+    return json::json::parse(std::ifstream{test_file}).get<StateTransitionTest>();
+}
 
-    auto test = j.get<StateTransitionTest>();
-
+static void run_state_test(const StateTransitionTest& test)
+{
     evmc::VM vm{evmc_create_evmone(), {
                                           {"O", "0"},
                                           // {"trace", "1"},
@@ -302,7 +305,6 @@ static void run_state_test(const json::json& j)
     }
 }
 
-namespace fs = std::filesystem;
 
 class StateTest : public testing::Test
 {
@@ -311,7 +313,7 @@ class StateTest : public testing::Test
 public:
     explicit StateTest(fs::path json_test_file) : m_json_test_file{std::move(json_test_file)} {}
 
-    void TestBody() final { run_state_test(json::json::parse(std::ifstream{m_json_test_file})); }
+    void TestBody() final { run_state_test(load_state_test(m_json_test_file)); }
 };
 
 int main(int argc, char* argv[])
