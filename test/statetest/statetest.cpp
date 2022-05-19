@@ -106,16 +106,19 @@ int main(int argc, char* argv[])
     if (argc != 2)
         return -1;
 
+    std::vector<fs::path> test_files;
     const fs::path root_test_dir{argv[1]};
-    for (const auto& dir_entry : fs::recursive_directory_iterator{root_test_dir})
+    std::copy_if(fs::recursive_directory_iterator{root_test_dir},
+        fs::recursive_directory_iterator{}, std::back_inserter(test_files),
+        [](const fs::directory_entry& entry) {
+            return entry.is_regular_file() && entry.path().extension() == ".json";
+        });
+    std::sort(test_files.begin(), test_files.end());
+    for (const auto& p : test_files)
     {
-        const auto& p = dir_entry.path();
-        if (dir_entry.is_regular_file() && p.extension() == ".json")
-        {
-            const auto d = fs::relative(p, root_test_dir);
-            testing::RegisterTest(d.parent_path().c_str(), d.stem().c_str(), nullptr, nullptr,
-                p.c_str(), 0, [p]() -> testing::Test* { return new StateTest(p); });
-        }
+        const auto d = fs::relative(p, root_test_dir);
+        testing::RegisterTest(d.parent_path().c_str(), d.stem().c_str(), nullptr, nullptr,
+            p.c_str(), 0, [p]() -> testing::Test* { return new StateTest(p); });
     }
 
     return RUN_ALL_TESTS();
