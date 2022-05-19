@@ -50,6 +50,9 @@ TransitionResult transition(
     if (rev < EVMC_LONDON && tx.kind == Tx::Kind::eip1559)
         return {false, {}};
 
+    if (rev < EVMC_BERLIN && !tx.access_list.empty())
+        return {false, {}};
+
     if (tx.max_gas_price < tx.max_priority_gas_price)
         return {false, {}};  // tip too high
 
