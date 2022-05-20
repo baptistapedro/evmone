@@ -122,13 +122,9 @@ public:
 
     bytes32 get_storage(const address& addr, const bytes32& key) const noexcept override
     {
-        const auto acc = m_state.get_or_null(addr);
-        if (acc == nullptr)
-            return {};
-
-        const auto storage_iter = acc->storage.find(key);
-        if (storage_iter != acc->storage.end())
-            return storage_iter->second.current;
+        const auto& acc = m_state.get(addr);
+        if (const auto it = acc.storage.find(key); it != acc.storage.end())
+            return it->second.current;
         return {};
     }
 
