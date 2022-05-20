@@ -79,6 +79,18 @@ struct Tx
 using evmc::bytes32;
 using evmc::uint256be;
 
+struct Log
+{
+    address addr;
+    bytes data;
+    std::vector<hash256> topics;
+};
+
+inline bytes rlp_encode(const Log& log)
+{
+    return rlp::tuple(log.addr, log.topics, log.data);
+}
+
 class StateHost : public evmc::Host
 {
     evmc_revision m_rev;
@@ -490,13 +502,6 @@ public:
         return {};
     }
 
-    struct Log
-    {
-        address addr;
-        bytes data;
-        std::vector<hash256> topics;
-    };
-
     std::vector<Log> logs;
 
     void emit_log(const address& addr, const uint8_t* data, size_t data_size,
@@ -555,18 +560,7 @@ public:
     }
 };
 
-inline bytes rlp_encode(const StateHost::Log& log)
-{
-    return rlp::tuple(log.addr, log.topics, log.data);
-}
-
-struct TransitionResult
-{
-    bool success;
-    hash256 logs_hash;
-};
-
-[[nodiscard]] TransitionResult transition(
+[[nodiscard]] std::optional<std::vector<Log>> transition(
     State& state, const BlockInfo& block, const Tx& tx, evmc_revision rev, evmc::VM& vm);
 
 hash256 trie_hash(const State& state);

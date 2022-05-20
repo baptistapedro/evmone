@@ -34,8 +34,8 @@ static void run_state_test(const StateTransitionTest& test)
             const auto tx = test.multi_tx.get(expected.indexes);
             auto state = test.pre_state;
 
-            const auto tx_status = state::transition(state, test.block, tx, rev, vm);
-            EXPECT_NE(tx_status.success, expected.exception);
+            const auto tx_logs = state::transition(state, test.block, tx, rev, vm);
+            EXPECT_NE(tx_logs.has_value(), expected.exception);
 
             std::ostringstream state_dump;
 
@@ -55,9 +55,10 @@ static void run_state_test(const StateTransitionTest& test)
 
             EXPECT_EQ(state::trie_hash(state), expected.state_hash) << state_dump.str();
 
-            const auto logs_hash =
-                (tx_status.logs_hash != hash256{}) ? tx_status.logs_hash : keccak256(bytes{0xc0});
-            EXPECT_EQ(logs_hash, expected.logs_hash);
+            if (tx_logs.has_value())
+            {
+                EXPECT_EQ(keccak256(rlp::encode(*tx_logs)), expected.logs_hash);
+            }
 
             ++i;
         }

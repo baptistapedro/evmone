@@ -44,49 +44,49 @@ int64_t compute_tx_intrinsic_cost(evmc_revision rev, const Tx& tx) noexcept
 }
 }  // namespace
 
-TransitionResult transition(
+std::optional<std::vector<Log>> transition(
     State& state, const BlockInfo& block, const Tx& tx, evmc_revision rev, evmc::VM& vm)
 {
     if (rev < EVMC_LONDON && tx.kind == Tx::Kind::eip1559)
-        return {false, {}};
+        return {};
 
     if (rev < EVMC_BERLIN && !tx.access_list.empty())
-        return {false, {}};
+        return {};
 
     if (tx.max_gas_price < tx.max_priority_gas_price)
-        return {false, {}};  // tip too high
+        return {};  // tip too high
 
     if (block.gas_limit < tx.gas_limit)
-        return {false, {}};
+        return {};
 
     if (!state.get(tx.sender).code.empty())
-        return {false, {}};  // Tx origin must not be a contract (EIP-3607).
+        return {};  // Tx origin must not be a contract (EIP-3607).
 
     const auto base_fee = (rev >= EVMC_LONDON) ? block.base_fee : 0;
 
     if (tx.max_gas_price < base_fee)
-        return {false, {}};
+        return {};
 
     // FIXME: The effective_gas_price should be used.
     const auto tx_max_cost = intx::uint512{tx.gas_limit} * intx::uint512{tx.max_gas_price};
     if (state.get(tx.sender).balance < tx_max_cost)
-        return {false, {}};
+        return {};
 
     const auto execution_gas_limit = tx.gas_limit - compute_tx_intrinsic_cost(rev, tx);
     if (execution_gas_limit < 0)
-        return {false, {}};
+        return {};
 
     state.get(tx.sender).balance -= static_cast<intx::uint256>(tx_max_cost);
 
     if (state.get(tx.sender).balance < tx.value)
     {
         state.get(tx.sender).balance += static_cast<intx::uint256>(tx_max_cost);
-        return {false, {}};  // FIXME: sender balance is wrong.
+        return {};  // FIXME: sender balance is wrong.
     }
 
     // Bump sender nonce. This must be the last transaction validity check.
     if (!state.get(tx.sender).bump_nonce())
-        return {false, {}};
+        return {};
 
     const auto state_snapshot = state;
 
@@ -175,9 +175,8 @@ TransitionResult transition(
 
     if (result.status_code != EVMC_SUCCESS)
         host.logs.clear();
-    const auto logs_hash = keccak256(rlp::encode(host.logs));
 
-    return {true, logs_hash};
+    return std::move(host.logs);
 }
 
 hash256 trie_hash(const State& state)
