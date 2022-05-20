@@ -31,25 +31,19 @@ uint64_t from_json<uint64_t>(const json::json& j)
 template <>
 bytes from_json<bytes>(const json::json& j)
 {
-    return from_hex(j.get<std::string>());
+    return from_hex(j.get<std::string>()).value();
 }
 
 template <>
 address from_json<address>(const json::json& j)
 {
-    const auto s = j.get<std::string>();
-    assert(s.size() == 42);
-    return evmc::literals::internal::from_hex<address>(s.c_str() + 2);
+    return evmc::literals::from_hex<address>(j.get<std::string>());
 }
 
 template <>
 hash256 from_json<hash256>(const json::json& j)
 {
-    const auto b = from_json<bytes>(j);
-    assert(b.size() <= 32);
-    hash256 h{};
-    std::memcpy(&h.bytes[32 - b.size()], b.data(), b.size());
-    return h;
+    return evmc::literals::from_hex<hash256>(j.get<std::string>());
 }
 
 template <>
