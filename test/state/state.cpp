@@ -85,8 +85,8 @@ std::optional<std::vector<Log>> transition(
     }
 
     // Bump sender nonce. This must be the last transaction validity check.
-    if (!state.get(tx.sender).bump_nonce())
-        return {};
+    [[maybe_unused]] const auto nonce_ok = state.get(tx.sender).bump_nonce();
+    assert(nonce_ok);  // TODO: Not tested by state tests.
 
     const auto state_snapshot = state;
 
