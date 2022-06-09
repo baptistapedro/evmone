@@ -1,14 +1,12 @@
-FROM debian:testing as evmone
+FROM fuzzers/libfuzzer:12.0
 
-RUN apt-get update -q && apt-get install -qy --no-install-recommends \
-    ca-certificates g++ cmake ninja-build \
- && rm -rf /var/lib/apt/lists/*
+RUN apt-get update
+RUN apt install -y build-essential wget git clang  automake autotools-dev  libtool zlib1g zlib1g-dev cmake
+RUN git clone --recursive https://github.com/ethereum/evmone
+WORKDIR /evmone
+RUN cmake -DCMAKE_C_COMPILER=clang -DCMAKE_CC_COMPILER=clang -DBUILD_SHARED_LIBS=false -DEVMONE_FUZZING=ON .
+RUN make
+RUN make install
 
-ADD . /src
-RUN mkdir /build \
- && cmake -S /src -B /build -G Ninja -DEVMONE_TESTING=ON -DHUNTER_ROOT=/build \
- && cmake --build /build --target install \
- && ldconfig \
- && rm /build -rf \
- && adduser --disabled-password --no-create-home --gecos '' evmone
-USER evmone
+ENTRYPOINT []
+CMD /evmone/bin/evmone-fuzzer
