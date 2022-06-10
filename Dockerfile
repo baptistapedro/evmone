@@ -1,4 +1,4 @@
-ROM fuzzers/libfuzzer:12.0
+FROM fuzzers/libfuzzer:12.0
 
 #RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key| apt-key add -
 RUN apt-get update
