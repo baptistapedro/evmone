@@ -9,7 +9,6 @@ WORKDIR /cmake-3.20.1
 RUN ./bootstrap
 RUN make
 RUN make install
-WORKDIR /
 RUN printf "deb http://apt.llvm.org/xenial/ llvm-toolchain-xenial-12 main" | tee /etc/apt/sources.list.d/llvm-toolchain-xenial-12.list
 RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
 RUN apt-get update
