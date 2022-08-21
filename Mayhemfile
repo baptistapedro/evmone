@@ -1,0 +1,8 @@
+image: index.docker.io/pedbap/ethereum-evmone-fuzz@sha256:3ceee9504bd2333f7d1fb4d21e7f0e261a79c6535cefb9ea4c5538ffdfb1a72b
+project: baptistapedro/ethereum-evmone-fuzz
+target: ethereum-evmone-fuzz-latest
+cmds:
+  - cmd: /evmone/bin/evmone-fuzzer
+    env: {}
+testsuite:
+  - https://mayhem.forallsecure.com/baptistapedro/ethereum-evmone-fuzz/ethereum-evmone-fuzz-latest/testsuite.tar
