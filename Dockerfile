@@ -21,4 +21,4 @@ RUN make
 RUN make install
 
 ENTRYPOINT []
-CMD /evmone/bin/evmone-fuzzer
+CMD ["/evmone/bin/evmone-fuzzer"]
