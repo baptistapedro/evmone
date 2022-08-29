@@ -1,7 +1,6 @@
 FROM fuzzers/libfuzzer:12.0
 
-#RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key| apt-key add -
-RUN apt-get update
+RUN apt-get update && apt-get install -fy software-properties-common wget gnupg gnupg2 gnupg1 &&     add-apt-repository 'deb http://apt.llvm.org/buster/ llvm-toolchain-buster-12 main' &&  wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - &&  apt-get update &&     apt-get install -fy libfuzzer-12-dev
 RUN apt install -y build-essential wget git xz-utils automake autotools-dev  libtool zlib1g zlib1g-dev libssl-dev curl
 RUN wget https://github.com/Kitware/CMake/releases/download/v3.20.1/cmake-3.20.1.tar.gz
 RUN tar xvfz cmake-3.20.1.tar.gz
